@@ -66,8 +66,7 @@ func main() {
         if err != nil {
             log.Fatalf("Error reading from interface: %v", err)
         }
-        src, dst := getAddrs(packet[:n])
-        parsed = parseIpv4(packet[:n])
+        parsed := parseIpv4(packet[:n])
         printIpv4(parsed)
     }
 }
