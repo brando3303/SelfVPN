@@ -3,6 +3,7 @@ package main
 import (
     "fmt"
     "log"
+    "encoding/binary"
 
     "github.com/songgao/water"
     "github.com/vishvananda/netlink"
