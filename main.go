@@ -47,6 +47,22 @@ func main() {
         if err != nil {
             log.Fatalf("Error reading from interface: %v", err)
         }
-        fmt.Printf("Read %d bytes: % x\n", n, packet[:n])
+        src, dst := getAddrs(packet[:n])
+        fmt.Printf("Read %d bytes % x\n", n, packet[:n])
+        fmt.Printf("Source: %s, Destination: %s\n", src, dst)
     }
+}
+
+func Uint32ToIPv4(ip uint32) string {
+	b1 := byte(ip >> 24)
+	b2 := byte(ip >> 16)
+	b3 := byte(ip >> 8)
+	b4 := byte(ip)
+
+	return fmt.Sprintf("%d.%d.%d.%d", b1, b2, b3, b4)
+}
+
+func getAddrs(packet []byte) (string, string) {
+    // Dummy implementation for illustration
+    return Uint32ToIPv4(binary.BigEndian.Uint32(packet[96:100])), Uint32ToIPv4(binary.BigEndian.Uint32(packet[128:132]))
 }
