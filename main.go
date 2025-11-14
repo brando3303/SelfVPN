@@ -65,5 +65,5 @@ func Uint32ToIPv4(ip uint32) string {
 
 func getAddrs(packet []byte) (string, string) {
     // Dummy implementation for illustration
-    return Uint32ToIPv4(binary.BigEndian.Uint32(packet[12:15])), Uint32ToIPv4(binary.BigEndian.Uint32(packet[16:20]))
+    return Uint32ToIPv4(binary.BigEndian.Uint32(packet[12:16])), Uint32ToIPv4(binary.BigEndian.Uint32(packet[16:20]))
 }
