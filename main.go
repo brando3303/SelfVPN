@@ -163,8 +163,7 @@ func printIpv4(ipv4 *Ipv4Packet) {
 		ipv4.Checksum,
 		ipv4.Src[0], ipv4.Src[1], ipv4.Src[2], ipv4.Src[3],
 		ipv4.Dst[0], ipv4.Dst[1], ipv4.Dst[2], ipv4.Dst[3],
-		string(ipv4.Data)
-	)
+		string(ipv4.Data))
 	if len(ipv4.Options) > 0 {
 		fmt.Printf(" | Opts: %d bytes", len(ipv4.Options))
 	}
