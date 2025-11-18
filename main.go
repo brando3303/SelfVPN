@@ -27,8 +27,7 @@ type Ipv4Packet struct {
 	Data    []byte // payload
 }
 
-func main() {
-    // Step 1: Create a TUN interface
+func initTunnel(deviceName string, ipAddr string) (*water.Interface, error) {
     cfg := water.Config{
         DeviceType: water.TUN,
     }
@@ -36,28 +35,42 @@ func main() {
 
     iface, err := water.New(cfg)
     if err != nil {
-        log.Fatalf("Failed to create TUN: %v", err)
+        log.Printf("Failed to create TUN: %v", err)
+        return nil, err
     }
     fmt.Printf("Interface %s created\n", iface.Name())
 
     // Step 2: Configure it with netlink
     link, err := netlink.LinkByName(iface.Name())
     if err != nil {
-        log.Fatalf("Could not find interface: %v", err)
+        log.Printf("Could not find interface: %v", err)
+        return nil, err
     }
 
     // Assign IP address
     addr, _ := netlink.ParseAddr("10.0.0.1/24")
     if err := netlink.AddrAdd(link, addr); err != nil {
-        log.Fatalf("Failed to add address: %v", err)
+        log.Printf("Failed to add address: %v", err)
+        return nil, err
     }
 
     // Bring the interface up
     if err := netlink.LinkSetUp(link); err != nil {
-        log.Fatalf("Failed to bring up interface: %v", err)
+        log.Printf("Failed to bring up interface: %v", err)
+        return nil, err
     }
 
     fmt.Printf("Interface %s configured with %s\n", iface.Name(), addr)
+
+    return iface, nil
+}
+
+func main() {
+    // Step 1: Create a TUN interface
+    iface, err := initTunnel("tun0", "10.0.0.1/24")
+    if err != nil {
+        log.Fatalf("Failed to initialize tunnel: %v", err)
+    }
 
     // Step 3: Handle packets (for demo, just read and dump)
     packet := make([]byte, 1500)
@@ -137,7 +150,7 @@ func printIpv4(ipv4 *Ipv4Packet) {
 		return
 	}
 
-	fmt.Printf("Ver: %d | IHL: %d | TOS: %d | Len: %d | ID: %d | Flags: 0x%x | FragOff: %d | TTL: %d | Proto: %d | Chksum: 0x%04x | Src: %d.%d.%d.%d | Dst: %d.%d.%d.%d",
+	fmt.Printf("Ver: %d | IHL: %d | TOS: %d | Len: %d | ID: %d | Flags: 0x%x | FragOff: %d | TTL: %d | Proto: %d | Chksum: 0x%04x | Src: %d.%d.%d.%d | Dst: %d.%d.%d.%d | Data: %s",
 		ipv4.Version,
 		ipv4.IHL,
 		ipv4.TOS,
@@ -149,8 +162,9 @@ func printIpv4(ipv4 *Ipv4Packet) {
 		ipv4.Protocol,
 		ipv4.Checksum,
 		ipv4.Src[0], ipv4.Src[1], ipv4.Src[2], ipv4.Src[3],
-		ipv4.Dst[0], ipv4.Dst[1], ipv4.Dst[2], ipv4.Dst[3])
-
+		ipv4.Dst[0], ipv4.Dst[1], ipv4.Dst[2], ipv4.Dst[3],
+		string(ipv4.Data)
+	)
 	if len(ipv4.Options) > 0 {
 		fmt.Printf(" | Opts: %d bytes", len(ipv4.Options))
 	}
