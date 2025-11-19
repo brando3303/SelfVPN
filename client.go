@@ -125,6 +125,7 @@ func packetOutLoop(iface *water.Interface, conn *net.UDPConn) {
 		Printf("sent packet to VPN server: ")
     parsed := parseIpv4(packet[:n])
     printIpv4(parsed)
+	}
 }
 
 // processOutPacket takes in the raw packet bytes recieved from the TUN interface,
