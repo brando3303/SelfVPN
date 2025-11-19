@@ -95,7 +95,7 @@ func main() {
     // Create tunnel interface : 
 		// read from tunnel -> reqs from os/user-space (applications etc, the data that will be sent to the VPN)
 		// write to tunnel -> send response to os
-    iface, err := initTunnel("tun0", "10.0.0.1/24")
+    iface, err := initTunnel("tun0", "10.0.2.1/24")
     if err != nil {
         log.Fatalf("Failed to initialize tunnel: %v", err)
     }
