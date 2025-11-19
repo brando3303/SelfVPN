@@ -82,20 +82,25 @@ func SetupUDPConn(addr string) (*net.UDPConn, error) {
 }
 
 
-
+// main function to start the VPN client
+// args: server address, proxied destinations
 func main() {
-
 		args := os.Args[1:]
-		if len(args) != 1 {
-			fmt.Println("Usage: selfVPN <server_ip:port>")
+		if len(args) != 2 {
+			fmt.Println("Usage: selfVPN <server_ip:port> <proxied_destinations/cidrs>")
 			return
 		}
 		serverAddr := args[0]
+		proxiedDestinations := args[1]
+
+		fmt.Printf("Starting selfVPN client\n")
+		fmt.Printf("Server address: %s\n", serverAddr)
+		fmt.Printf("Proxied destinations: %s\n", proxiedDestinations)
 
     // Create tunnel interface : 
 		// read from tunnel -> reqs from os/user-space (applications etc, the data that will be sent to the VPN)
 		// write to tunnel -> send response to os
-    iface, err := initTunnel("tun0", "10.0.2.1/24")
+    iface, err := initTunnel("tun0", proxiedDestinations)
     if err != nil {
         log.Fatalf("Failed to initialize tunnel: %v", err)
     }
