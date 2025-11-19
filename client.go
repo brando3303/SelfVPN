@@ -3,6 +3,8 @@ package main
 import (
     "fmt"
     "log"
+    "net"
+		"os"
     "encoding/binary"
 
     "github.com/songgao/water"
@@ -31,7 +33,7 @@ func initTunnel(deviceName string, ipAddr string) (*water.Interface, error) {
     cfg := water.Config{
         DeviceType: water.TUN,
     }
-    cfg.Name = "tun0"
+    cfg.Name = deviceName
 
     iface, err := water.New(cfg)
     if err != nil {
@@ -48,7 +50,7 @@ func initTunnel(deviceName string, ipAddr string) (*water.Interface, error) {
     }
 
     // Assign IP address
-    addr, _ := netlink.ParseAddr("10.0.0.1/24")
+    addr, _ := netlink.ParseAddr(ipAddr)
     if err := netlink.AddrAdd(link, addr); err != nil {
         log.Printf("Failed to add address: %v", err)
         return nil, err
@@ -65,23 +67,98 @@ func initTunnel(deviceName string, ipAddr string) (*water.Interface, error) {
     return iface, nil
 }
 
+func SetupUDPConn(addr string) (*net.UDPConn, error) {
+	udpAddr, err := net.ResolveUDPAddr("udp", addr)
+	if err != nil {
+		return nil, fmt.Errorf("resolve addr: %w", err)
+	}
+
+	conn, err := net.DialUDP("udp", nil, udpAddr)
+	if err != nil {
+		return nil, fmt.Errorf("dial udp: %w", err)
+	}
+
+	return conn, nil
+}
+
+
+
 func main() {
-    // Step 1: Create a TUN interface
+
+		args := os.Args[1:]
+		if len(args) != 1 {
+			fmt.Println("Usage: selfVPN <server_ip:port>")
+			return
+		}
+		serverAddr := args[0]
+
+    // Create tunnel interface : 
+		// read from tunnel -> reqs from os/user-space (applications etc, the data that will be sent to the VPN)
+		// write to tunnel -> send response to os
     iface, err := initTunnel("tun0", "10.0.0.1/24")
     if err != nil {
         log.Fatalf("Failed to initialize tunnel: %v", err)
     }
 
+		conn, err := SetupUDPConn(serverAddr)
+		if err != nil {
+			log.Fatalf("Failed to set up UDP connection: %v", err)
+		}
+		defer conn.Close()
+
     // Step 3: Handle packets (for demo, just read and dump)
-    packet := make([]byte, 1500)
-    for {
-        n, err := iface.Read(packet)
-        if err != nil {
-            log.Fatalf("Error reading from interface: %v", err)
-        }
-        parsed := parseIpv4(packet[:n])
-        printIpv4(parsed)
+		go packetOutLoop(iface, conn)
+		go packetInLoop(iface, conn)
+
+}
+
+func packetOutLoop(iface *water.Interface, conn *net.UDPConn) {
+	packet := make([]byte, 1024)
+  for {
+		// read packet from TUN interface
+    n, err := iface.Read(packet)
+    if err != nil {
+        log.Fatalf("Error reading from interface: %v", err)
     }
+		// process and send packet to VPN server
+		processOutPacket(packet[:n], conn)
+		Printf("sent packet to VPN server: ")
+    parsed := parseIpv4(packet[:n])
+    printIpv4(parsed)
+}
+
+// processOutPacket takes in the raw packet bytes recieved from the TUN interface,
+// performs all processing steps (encryption, encapsulation), sends the packet to the VPN server,
+// returns errors.
+func processOutPacket(packet []byte, conn *net.UDPConn) ([]byte, error) {
+	// for now just send the raw packet
+	_, err := conn.Write(packet)
+	return packet, err
+}
+
+func packetInLoop(iface *water.Interface, conn *net.UDPConn) {
+	packet := make([]byte, 1024)
+  for {
+		// read packet from VPN server
+		n, err := conn.Read(packet)
+    if err != nil {
+        log.Fatalf("Error reading from connection: %v", err)
+    }
+		// process and write packet to TUN interface
+		processInPacket(packet[:n], iface)
+		parsed := parseIpv4(packet[:n])
+		Printf("recieved packet from VPN server: ")
+		printIpv4(parsed)
+	}
+}
+
+// processInPacket takes in the raw packet bytes recieved from the VPN server,
+// performs all processing steps (decapsulation, decryption), writes the packet to the TUN interface,
+// returns errors.
+func processInPacket(packet []byte, iface *water.Interface) error {
+	// for now just write the raw packet
+	_, err := iface.Write(packet)
+	return err
 }
 
 func Uint32ToIPv4(ip uint32) string {
@@ -150,7 +227,7 @@ func printIpv4(ipv4 *Ipv4Packet) {
 		return
 	}
 
-	fmt.Printf("Ver: %d | IHL: %d | TOS: %d | Len: %d | ID: %d | Flags: 0x%x | FragOff: %d | TTL: %d | Proto: %d | Chksum: 0x%04x | Src: %d.%d.%d.%d | Dst: %d.%d.%d.%d | Data: %s",
+	fmt.Printf("Ver: %d | IHL: %d | TOS: %d | Len: %d | ID: %d | Flags: 0x%x | FragOff: %d | TTL: %d | Proto: %d | Chksum: 0x%04x | Src: %d.%d.%d.%d | Dst: %d.%d.%d.%d",
 		ipv4.Version,
 		ipv4.IHL,
 		ipv4.TOS,
@@ -162,8 +239,7 @@ func printIpv4(ipv4 *Ipv4Packet) {
 		ipv4.Protocol,
 		ipv4.Checksum,
 		ipv4.Src[0], ipv4.Src[1], ipv4.Src[2], ipv4.Src[3],
-		ipv4.Dst[0], ipv4.Dst[1], ipv4.Dst[2], ipv4.Dst[3],
-		string(ipv4.Data))
+		ipv4.Dst[0], ipv4.Dst[1], ipv4.Dst[2], ipv4.Dst[3])
 	if len(ipv4.Options) > 0 {
 		fmt.Printf(" | Opts: %d bytes", len(ipv4.Options))
 	}
