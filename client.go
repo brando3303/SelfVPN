@@ -122,7 +122,7 @@ func packetOutLoop(iface *water.Interface, conn *net.UDPConn) {
     }
 		// process and send packet to VPN server
 		processOutPacket(packet[:n], conn)
-		Printf("sent packet to VPN server: ")
+		fmt.Printf("sent packet to VPN server: ")
     parsed := parseIpv4(packet[:n])
     printIpv4(parsed)
 	}
@@ -148,7 +148,7 @@ func packetInLoop(iface *water.Interface, conn *net.UDPConn) {
 		// process and write packet to TUN interface
 		processInPacket(packet[:n], iface)
 		parsed := parseIpv4(packet[:n])
-		Printf("recieved packet from VPN server: ")
+		fmt.Printf("recieved packet from VPN server: ")
 		printIpv4(parsed)
 	}
 }
