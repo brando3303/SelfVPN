@@ -124,7 +124,8 @@ func packetOutLoop(iface *water.Interface, conn *net.UDPConn) {
 		// read packet from TUN interface
     n, err := iface.Read(packet)
     if err != nil {
-        log.Fatalf("Error reading from interface: %v", err)
+        fmt.Printf("Error reading from interface: %v", err)
+				continue
     }
 		// process and send packet to VPN server
 		processOutPacket(packet[:n], conn)
@@ -149,7 +150,8 @@ func packetInLoop(iface *water.Interface, conn *net.UDPConn) {
 		// read packet from VPN server
 		n, err := conn.Read(packet)
     if err != nil {
-        log.Fatalf("Error reading from connection: %v", err)
+        fmt.Printf("Error reading from connection: %v", err)
+				continue
     }
 		// process and write packet to TUN interface
 		processInPacket(packet[:n], iface)
