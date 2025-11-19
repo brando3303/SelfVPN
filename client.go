@@ -109,6 +109,7 @@ func main() {
     // Step 3: Handle packets (for demo, just read and dump)
 		go packetOutLoop(iface, conn)
 		go packetInLoop(iface, conn)
+		select {} // block forever
 
 }
 
