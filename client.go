@@ -29,7 +29,10 @@ type Ipv4Packet struct {
 	Data    []byte // payload
 }
 
-func initTunnel(deviceName string, ipAddr string, routeDest string) (*water.Interface, error) {
+// deviceName: "tun0"
+// localTunAddr: "10.0.0.1/24"
+// routeDest: "98.137.11.164/32"
+func initTunnel(deviceName string, localTunAddr string, routeDest string) (*water.Interface, error) {
     cfg := water.Config{
         DeviceType: water.TUN,
     }
@@ -50,7 +53,7 @@ func initTunnel(deviceName string, ipAddr string, routeDest string) (*water.Inte
     }
 
     // Assign IP address
-    addr, _ := netlink.ParseAddr(ipAddr)
+    addr, _ := netlink.ParseAddr(localTunAddr)
     if err := netlink.AddrAdd(link, addr); err != nil {
         log.Printf("Failed to add address: %v", err)
         return nil, err
@@ -106,7 +109,7 @@ func SetupUDPConn(addr string) (*net.UDPConn, error) {
 func main() {
 		args := os.Args[1:]
 		if len(args) != 3 {
-			fmt.Println("Usage: selfVPN <server_ip:port> <local_ip:port> <proxied_destinations/cidrs>")
+			fmt.Println("Usage: selfVPN <server_ip:port> <local_ip/cidr> <proxied_destinations/cidrs>")
 			return
 		}
 		serverAddr := args[0]
