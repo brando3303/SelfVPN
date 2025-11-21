@@ -7,6 +7,9 @@ import (
 		"os"
     "encoding/binary"
 
+    "github.com/google/nftables"
+    "github.com/google/nftables/expr"
+    "github.com/google/nftables/inet"
     "github.com/songgao/water"
     "github.com/vishvananda/netlink"
 		//iptables "github.com/coreos/go-iptables/iptables"
@@ -31,98 +34,107 @@ type Ipv4Packet struct {
 }
 
 // SetupTunAndRouting creates tun0, assigns IP, enables NAT and forwarding.
-func SetupTunAndRouting(tunIP string, tunCIDR string, outIface string) (*water.Interface, error) {
+func SetupServerTunnel(tunName, tunIP string, tunMask int, outboundIf string) (*water.Interface, error) {
 
-    // ---------------------------------
-    // 1. Create the TUN interface
-    // ---------------------------------
+    // ---------------------------
+    // 1. Create TUN interface
+    // ---------------------------
     cfg := water.Config{
         DeviceType: water.TUN,
     }
-    cfg.Name = "tun0"
+    cfg.Name = tunName
 
-    iface, err := water.New(cfg)
+    tun, err := water.New(cfg)
     if err != nil {
-        return nil, fmt.Errorf("failed to create tun: %v", err)
+        return nil, fmt.Errorf("failed to create tun: %w", err)
     }
 
-    fmt.Println("[+] tun0 created")
-
-    // ---------------------------------
-    // 2. Bring interface UP and assign IP
-    // ---------------------------------
-    link, err := netlink.LinkByName("tun0")
+    // Get link reference for netlink ops
+    link, err := netlink.LinkByName(tunName)
     if err != nil {
-        return nil, fmt.Errorf("cannot get tun0: %v", err)
+        return nil, fmt.Errorf("netlink cannot find tun: %w", err)
     }
 
-    // Create IPNet for tun0
-    ip, ipNet, err := net.ParseCIDR(tunCIDR)
+    // ---------------------------
+    // 2. Assign IP and bring interface up (netlink)
+    // ---------------------------
+    addr, err := netlink.ParseAddr(fmt.Sprintf("%s/%d", tunIP, tunMask))
     if err != nil {
-        return nil, fmt.Errorf("bad CIDR: %v", err)
+        return nil, fmt.Errorf("parse addr: %w", err)
     }
-    ipNet.IP = net.ParseIP(tunIP)
-
-    addr := &netlink.Addr{IPNet: ipNet}
 
     if err := netlink.AddrAdd(link, addr); err != nil {
-        return nil, fmt.Errorf("failed to add IP to tun0: %v", err)
+        return nil, fmt.Errorf("addr add: %w", err)
     }
 
     if err := netlink.LinkSetUp(link); err != nil {
-        return nil, fmt.Errorf("failed to bring tun0 up: %v", err)
+        return nil, fmt.Errorf("link up: %w", err)
     }
 
-    fmt.Println("[+] tun0 IP assigned and interface up")
-
-    // ---------------------------------
-    // 3. Install NAT (MASQUERADE)
-    // ---------------------------------
-    ipt, err := iptables.New()
-    if err != nil {
-        return nil, fmt.Errorf("iptables init failed: %v", err)
+    // ---------------------------
+    // 3. Add default route through TUN (netlink)
+    // ---------------------------
+    rt := &netlink.Route{
+        LinkIndex: link.Attrs().Index,
+        Dst:       nil, // nil = default route 0.0.0.0/0
     }
 
-    // MASQUERADE for outbound traffic
-    err = ipt.AppendUnique("nat", "POSTROUTING",
-        "-o", outIface,
-        "-j", "MASQUERADE",
-    )
-    if err != nil {
-        return nil, fmt.Errorf("failed to add MASQUERADE rule: %v", err)
+    if err := netlink.RouteAdd(rt); err != nil && !isExistsErr(err) {
+        return nil, fmt.Errorf("add route: %w", err)
     }
 
-    fmt.Println("[+] NAT MASQUERADE enabled")
+    // ---------------------------
+    // 4. NAT via nftables
+    // ---------------------------
+    c := &nftables.Conn{}
 
-    // ---------------------------------
-    // 4. Allow forwarding tun0 -> eth0 and eth0 -> tun0
-    // ---------------------------------
-    // allow traffic from tun0 to outbound interface
-    err = ipt.AppendUnique("filter", "FORWARD",
-        "-i", "tun0",
-        "-o", outIface,
-        "-j", "ACCEPT",
-    )
-    if err != nil {
-        return nil, fmt.Errorf("failed to add forward rule (tun→eth): %v", err)
+    // Get or create NAT table
+    table := c.AddTable(&nftables.Table{
+        Name:   "nat",
+        Family: nftables.TableFamilyINet,
+    })
+
+    // Get or create POSTROUTING chain
+    chain := c.AddChain(&nftables.Chain{
+        Name:     "postrouting",
+        Table:    table,
+        Type:     nftables.ChainTypeNAT,
+        Hooknum:  nftables.ChainHookPostrouting,
+        Priority: nftables.ChainPriorityNATSource,
+    })
+
+    // Add rule: masquerade outgoing on outboundIf
+    c.AddRule(&nftables.Rule{
+        Table: table,
+        Chain: chain,
+        Exprs: []expr.Any{
+            // match output iface
+            &expr.Meta{Key: expr.MetaKeyOIFNAME, Register: 1},
+            &expr.Cmp{
+                Register: 1,
+                Op:       expr.CmpOpEq,
+                Data:     []byte(outboundIf + "\x00"),
+            },
+            // masquerade
+            &expr.Masq{},
+        },
+    })
+
+    if err := c.Flush(); err != nil {
+        return nil, fmt.Errorf("nft flush: %w", err)
     }
 
-    // allow established traffic back
-    err = ipt.AppendUnique("filter", "FORWARD",
-        "-i", outIface,
-        "-o", "tun0",
-        "-m", "state",
-        "--state", "RELATED,ESTABLISHED",
-        "-j", "ACCEPT",
-    )
-    if err != nil {
-        return nil, fmt.Errorf("failed to add forward rule (eth→tun): %v", err)
-    }
-
-    fmt.Println("[+] Forwarding rules installed")
-
-    return iface, nil
+    return tun, nil
 }
+
+// helper for ignoring "file exists" errors from netlink
+func isExistsErr(err error) bool {
+    if err == nil {
+        return false
+    }
+    return strings.Contains(err.Error(), "file exists")
+}
+
 
 
 func SetupUDPConn(listenPort int) (*net.UDPConn, error) {
@@ -146,11 +158,14 @@ func SetupUDPConn(listenPort int) (*net.UDPConn, error) {
 // args: listen port
 func main() {
 		args := os.Args[1:]
-		if len(args) != 1 {
-			fmt.Println("Usage: selfVPN <listen_port>")
+		if len(args) != 4 {
+			fmt.Println("Usage: selfVPN <listen_port> <tunnel_ip> <tunnel_mask> <outbound_interface>")
 			return
 		}
 		listenPort := args[0]
+		tunnelIP := args[1]
+		tunnelMask := args[2]
+		outboundIf := args[3]
 
 		fmt.Printf("Starting selfVPN server\n")
 		fmt.Printf("Listening on port: %s\n", listenPort)
@@ -158,12 +173,12 @@ func main() {
     // Create tunnel interface : 
 		// read from tunnel -> responses from external sources that must be forwarded to client
 		// write to tunnel -> forward client requests to external sources
-    iface, err := initTunnel("tun0", proxiedDestinations)
+    iface, err := SetupServerTunnel("tun0", tunnelIP, tunnelMask, outboundIf)
     if err != nil {
         log.Fatalf("Failed to initialize tunnel: %v", err)
     }
 
-		conn, err := SetupUDPConn(serverAddr)
+		conn, err := SetupUDPConn(listenPort)
 		if err != nil {
 			log.Fatalf("Failed to set up UDP connection: %v", err)
 		}
