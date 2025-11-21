@@ -9,6 +9,7 @@ import (
 
     "github.com/songgao/water"
     "github.com/vishvananda/netlink"
+		iptables "github.com/coreos/go-iptables/iptables"
 )
 
 type Ipv4Packet struct {
@@ -29,97 +30,135 @@ type Ipv4Packet struct {
 	Data    []byte // payload
 }
 
-func initTunnel(deviceName string, ipAddr string, routeDest string) (*water.Interface, error) {
+// SetupTunAndRouting creates tun0, assigns IP, enables NAT and forwarding.
+func SetupTunAndRouting(tunIP string, tunCIDR string, outIface string) (*water.Interface, error) {
+
+    // ---------------------------------
+    // 1. Create the TUN interface
+    // ---------------------------------
     cfg := water.Config{
         DeviceType: water.TUN,
     }
-    cfg.Name = deviceName
+    cfg.Name = "tun0"
 
     iface, err := water.New(cfg)
     if err != nil {
-        log.Printf("Failed to create TUN: %v", err)
-        return nil, err
+        return nil, fmt.Errorf("failed to create tun: %v", err)
     }
-    fmt.Printf("Interface %s created\n", iface.Name())
 
-    // Step 2: Configure it with netlink
-    link, err := netlink.LinkByName(iface.Name())
+    fmt.Println("[+] tun0 created")
+
+    // ---------------------------------
+    // 2. Bring interface UP and assign IP
+    // ---------------------------------
+    link, err := netlink.LinkByName("tun0")
     if err != nil {
-        log.Printf("Could not find interface: %v", err)
-        return nil, err
+        return nil, fmt.Errorf("cannot get tun0: %v", err)
     }
 
-    // Assign IP address
-    addr, _ := netlink.ParseAddr(ipAddr)
+    // Create IPNet for tun0
+    ip, ipNet, err := net.ParseCIDR(tunCIDR)
+    if err != nil {
+        return nil, fmt.Errorf("bad CIDR: %v", err)
+    }
+    ipNet.IP = net.ParseIP(tunIP)
+
+    addr := &netlink.Addr{IPNet: ipNet}
+
     if err := netlink.AddrAdd(link, addr); err != nil {
-        log.Printf("Failed to add address: %v", err)
-        return nil, err
+        return nil, fmt.Errorf("failed to add IP to tun0: %v", err)
     }
 
-    // Bring the interface up
     if err := netlink.LinkSetUp(link); err != nil {
-        log.Printf("Failed to bring up interface: %v", err)
-        return nil, err
+        return nil, fmt.Errorf("failed to bring tun0 up: %v", err)
     }
 
-    // Step 5: Add a route for destination into TUN
-    // Example routeDest: "98.137.11.164/32"
-    _, dst, err := net.ParseCIDR(routeDest)
+    fmt.Println("[+] tun0 IP assigned and interface up")
+
+    // ---------------------------------
+    // 3. Install NAT (MASQUERADE)
+    // ---------------------------------
+    ipt, err := iptables.New()
     if err != nil {
-        return nil, fmt.Errorf("failed parsing route: %w", err)
+        return nil, fmt.Errorf("iptables init failed: %v", err)
     }
 
-    route := &netlink.Route{
-        LinkIndex: link.Attrs().Index,
-        Dst:       dst,
+    // MASQUERADE for outbound traffic
+    err = ipt.AppendUnique("nat", "POSTROUTING",
+        "-o", outIface,
+        "-j", "MASQUERADE",
+    )
+    if err != nil {
+        return nil, fmt.Errorf("failed to add MASQUERADE rule: %v", err)
     }
 
-    if err := netlink.RouteAdd(route); err != nil {
-        return nil, fmt.Errorf("failed to add route: %w", err)
+    fmt.Println("[+] NAT MASQUERADE enabled")
+
+    // ---------------------------------
+    // 4. Allow forwarding tun0 -> eth0 and eth0 -> tun0
+    // ---------------------------------
+    // allow traffic from tun0 to outbound interface
+    err = ipt.AppendUnique("filter", "FORWARD",
+        "-i", "tun0",
+        "-o", outIface,
+        "-j", "ACCEPT",
+    )
+    if err != nil {
+        return nil, fmt.Errorf("failed to add forward rule (tun→eth): %v", err)
     }
 
-    fmt.Println("Added route:", routeDest, "→", iface.Name())
+    // allow established traffic back
+    err = ipt.AppendUnique("filter", "FORWARD",
+        "-i", outIface,
+        "-o", "tun0",
+        "-m", "state",
+        "--state", "RELATED,ESTABLISHED",
+        "-j", "ACCEPT",
+    )
+    if err != nil {
+        return nil, fmt.Errorf("failed to add forward rule (eth→tun): %v", err)
+    }
 
-
-    fmt.Printf("Interface %s configured with %s\n", iface.Name(), addr)
+    fmt.Println("[+] Forwarding rules installed")
 
     return iface, nil
 }
 
-func SetupUDPConn(addr string) (*net.UDPConn, error) {
-	udpAddr, err := net.ResolveUDPAddr("udp", addr)
-	if err != nil {
-		return nil, fmt.Errorf("resolve addr: %w", err)
+
+func SetupUDPConn(listenPort int) (*net.UDPConn, error) {
+	addr := &net.UDPAddr{
+		IP:   net.IPv4zero, // 0.0.0.0 — accept from any address
+		Port: listenPort,
 	}
 
-	conn, err := net.DialUDP("udp", nil, udpAddr)
+	conn, err := net.ListenUDP("udp", addr)
 	if err != nil {
-		return nil, fmt.Errorf("dial udp: %w", err)
+		return nil, fmt.Errorf("listen udp: %w", err)
 	}
+	defer conn.Close()
+
+	fmt.Printf("Listening on UDP port %d...\n", listenPort)
 
 	return conn, nil
 }
 
-
-// main function to start the VPN client
-// args: server address, proxied destinations
+// main function to start the VPN server
+// args: listen port
 func main() {
 		args := os.Args[1:]
-		if len(args) != 3 {
-			fmt.Println("Usage: selfVPN <server_ip:port> <local_ip:port> <proxied_destinations/cidrs>")
+		if len(args) != 1 {
+			fmt.Println("Usage: selfVPN <listen_port>")
 			return
 		}
-		serverAddr := args[0]
-		localAddr := args[1]
-		proxiedDestinations := args[2]
-		fmt.Printf("Starting selfVPN client\n")
-		fmt.Printf("Server address: %s\n", serverAddr)
-		fmt.Printf("Proxied destinations: %s\n", localAddr, proxiedDestinations)
+		listenPort := args[0]
+
+		fmt.Printf("Starting selfVPN server\n")
+		fmt.Printf("Listening on port: %s\n", listenPort)
 
     // Create tunnel interface : 
-		// read from tunnel -> reqs from os/user-space (applications etc, the data that will be sent to the VPN)
-		// write to tunnel -> send response to os
-    iface, err := initTunnel("tun0", localAddr, proxiedDestinations)
+		// read from tunnel -> responses from external sources that must be forwarded to client
+		// write to tunnel -> forward client requests to external sources
+    iface, err := initTunnel("tun0", proxiedDestinations)
     if err != nil {
         log.Fatalf("Failed to initialize tunnel: %v", err)
     }
@@ -163,10 +202,11 @@ func processOutPacket(packet []byte, conn *net.UDPConn) ([]byte, error) {
 	return packet, err
 }
 
+// handles incoming packets from the VPN clients
 func packetInLoop(iface *water.Interface, conn *net.UDPConn) {
 	packet := make([]byte, 1024)
   for {
-		// read packet from VPN server
+		// read packet from client
 		n, err := conn.Read(packet)
     if err != nil {
         fmt.Printf("Error reading from connection: %v", err)
@@ -197,9 +237,8 @@ func Uint32ToIPv4(ip uint32) string {
 
 	return fmt.Sprintf("%d.%d.%d.%d", b1, b2, b3, b4)
 }
-
+// returns the source and destination IP addresses from an IPv4 packet
 func getAddrs(packet []byte) (string, string) {
-    // Dummy implementation for illustration
     return Uint32ToIPv4(binary.BigEndian.Uint32(packet[12:16])), Uint32ToIPv4(binary.BigEndian.Uint32(packet[16:20]))
 }
 
