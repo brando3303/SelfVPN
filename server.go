@@ -9,7 +9,7 @@ import (
 
     "github.com/songgao/water"
     "github.com/vishvananda/netlink"
-		iptables "github.com/coreos/go-iptables/iptables"
+		//iptables "github.com/coreos/go-iptables/iptables"
 )
 
 type Ipv4Packet struct {
