@@ -35,10 +35,6 @@ type Ipv4Packet struct {
 
 // SetupTunAndRouting creates tun0, assigns IP, enables NAT and forwarding.
 func SetupServerTunnel(tunName string, tunnel_interface_ip string, outboundIf string) (*water.Interface, error) {
-
-	// ---------------------------
-	// 1. Create TUN interface
-	// ---------------------------
 	cfg := water.Config{
 		DeviceType: water.TUN,
 	}
@@ -92,14 +88,12 @@ func SetupServerTunnel(tunName string, tunnel_interface_ip string, outboundIf st
 		Table: table,
 		Chain: chain,
 		Exprs: []expr.Any{
-			// match output iface
-			&expr.Meta{Key: expr.MetaKeyOIFNAME, Register: 1},
+			&expr.Meta{Key: expr.MetaKeyIIFNAME, Register: 1},
 			&expr.Cmp{
 				Register: 1,
 				Op:       expr.CmpOpEq,
-				Data:     []byte(outboundIf + "\x00"),
+				Data:     ifnameBytes(tunName),
 			},
-			// masquerade
 			&expr.Masq{},
 		},
 	})
@@ -109,6 +103,12 @@ func SetupServerTunnel(tunName string, tunnel_interface_ip string, outboundIf st
 	}
 
 	return tun, nil
+}
+
+func ifnameBytes(name string) []byte {
+	b := make([]byte, 16)
+	copy(b, []byte(name))
+	return b
 }
 
 // helper for ignoring "file exists" errors from netlink
@@ -129,7 +129,6 @@ func SetupUDPConn(listenPort int) (*net.UDPConn, error) {
 	if err != nil {
 		return nil, fmt.Errorf("listen udp: %w", err)
 	}
-	defer conn.Close()
 
 	fmt.Printf("Listening on UDP port %d...\n", listenPort)
 
@@ -187,7 +186,7 @@ func packetOutLoop(iface *water.Interface, conn *net.UDPConn) {
 		}
 		// process and send packet to VPN server
 		processOutPacket(packet[:n], conn)
-		fmt.Printf("sent packet to VPN server: ")
+		fmt.Printf("sending resp to client: ")
 		parsed := parseIpv4(packet[:n])
 		printIpv4(parsed)
 	}
@@ -215,7 +214,7 @@ func packetInLoop(iface *water.Interface, conn *net.UDPConn) {
 		// process and write packet to TUN interface
 		processInPacket(packet[:n], iface)
 		parsed := parseIpv4(packet[:n])
-		fmt.Printf("recieved packet from VPN server: ")
+		fmt.Printf("recieved from client, sending to dest: ")
 		printIpv4(parsed)
 	}
 }
