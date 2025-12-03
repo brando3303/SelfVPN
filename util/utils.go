@@ -5,6 +5,12 @@ import (
 	"fmt"
 )
 
+type IPPacket interface {
+	IPVersion() uint8 // 4 or 6
+	SrcIP() []byte    // return 4 or 16 bytes
+	DstIP() []byte
+}
+
 type Ipv4Packet struct {
 	Version        uint8 // always 4
 	IHL            uint8 // header length in 32-bit words
@@ -21,6 +27,47 @@ type Ipv4Packet struct {
 
 	Options []byte // only if IHL > 5
 	Data    []byte // payload
+}
+
+func (p *Ipv4Packet) IPVersion() uint8 {
+	return 4
+}
+
+func (p *Ipv4Packet) SrcIP() []byte {
+	return p.Src[:]
+}
+
+func (p *Ipv4Packet) DstIP() []byte {
+	return p.Dst[:]
+}
+
+type IPv6Packet struct {
+	Version       uint8    // always 6
+	TrafficClass  uint8    // 8 bits
+	FlowLabel     uint32   // low 20 bits used
+	PayloadLength uint16   // length of payload after this header
+	NextHeader    uint8    // like Protocol field in IPv4
+	HopLimit      uint8    // like TTL
+	Src           [16]byte // 128-bit source address
+	Dst           [16]byte // 128-bit destination address
+
+	// IPv6 has no checksum in the base header.
+	// Options appear only inside extension headers.
+
+	ExtensionHeaders []byte // raw extension header bytes, if present
+	Data             []byte // payload (TCP/UDP/ICMPv6/etc)
+}
+
+func (p *IPv6Packet) IPVersion() uint8 {
+	return 6
+}
+
+func (p *IPv6Packet) SrcIP() []byte {
+	return p.Src[:]
+}
+
+func (p *IPv6Packet) DstIP() []byte {
+	return p.Dst[:]
 }
 
 func Uint32ToIPv4(ip uint32) string {
@@ -107,4 +154,133 @@ func PrintIpv4(ipv4 *Ipv4Packet) {
 	}
 
 	fmt.Println()
+}
+
+func ParseIPv6(packet []byte) *IPv6Packet {
+	if len(packet) < 40 {
+		return nil // Not enough data for IPv6 fixed header
+	}
+
+	ipv6 := &IPv6Packet{}
+
+	// First 4 bytes: Version (4 bits), Traffic Class (8 bits), Flow Label (20 bits)
+	firstWord := binary.BigEndian.Uint32(packet[0:4])
+
+	ipv6.Version = uint8(firstWord >> 28)
+	ipv6.TrafficClass = uint8((firstWord >> 20) & 0xFF)
+	ipv6.FlowLabel = firstWord & 0xFFFFF // low 20 bits
+
+	// Payload Length, Next Header, Hop Limit
+	ipv6.PayloadLength = binary.BigEndian.Uint16(packet[4:6])
+	ipv6.NextHeader = packet[6]
+	ipv6.HopLimit = packet[7]
+
+	// Src and Dst IPv6 addresses
+	copy(ipv6.Src[:], packet[8:24])
+	copy(ipv6.Dst[:], packet[24:40])
+
+	// Offset begins after fixed header
+	offset := 40
+
+	// Pull extension headers (if any)
+	// We don't parse them individually — just capture raw bytes.
+	// Extension headers continue as long as NextHeader is in the extension header range.
+	// Extension header types: 0, 43, 44, 50, 51, 60, etc.
+	extHeaders := []byte{}
+	next := ipv6.NextHeader
+
+	for {
+		// Not an extension header → break.
+		if !isIPv6ExtensionHeader(next) {
+			break
+		}
+
+		// Need at least 2 bytes for the ext header length field
+		if len(packet) < offset+2 {
+			return ipv6
+		}
+
+		// Extension header length:
+		// length field = number of 8-byte units *after* these first 8 bytes.
+		extLen := int(packet[offset+1]+1) * 8
+
+		// Copy raw header bytes
+		if len(packet) < offset+extLen {
+			return ipv6
+		}
+		extHeaders = append(extHeaders, packet[offset:offset+extLen]...)
+
+		// Advance
+		next = packet[offset] // "Next Header" field inside extension header
+		offset += extLen
+	}
+
+	ipv6.ExtensionHeaders = extHeaders
+
+	// Remaining bytes = payload
+	if offset < len(packet) {
+		ipv6.Data = make([]byte, len(packet)-offset)
+		copy(ipv6.Data, packet[offset:])
+	}
+
+	return ipv6
+}
+
+func isIPv6ExtensionHeader(h uint8) bool {
+	switch h {
+	case 0, 43, 44, 50, 51, 60:
+		return true
+	default:
+		return false
+	}
+}
+
+func parseIpPacket(packet []byte) IPPacket {
+	if len(packet) < 1 {
+		fmt.Println("Packet too short")
+		return nil
+	}
+
+	version := packet[0] >> 4
+	if version == 4 {
+		ipv4 := ParseIpv4(packet)
+		return ipv4
+	} else if version == 6 {
+		ipv6 := ParseIPv6(packet)
+		return ipv6
+	} else {
+		fmt.Printf("Unknown IP version: %d\n", version)
+	}
+	return nil
+}
+
+func Ipv6ToString(ip []byte) string {
+	if len(ip) != 16 {
+		return ""
+	}
+	result := ""
+	for i := 0; i < 16; i += 2 {
+		if i > 0 {
+			result += ":"
+		}
+		if ip[i] == 0 && ip[i+1] == 0 {
+			continue
+		}
+		result += fmt.Sprintf("%02x%02x", ip[i], ip[i+1])
+	}
+	return result
+}
+
+func PrintPacketInfo(packet []byte) {
+	parsed := parseIpPacket(packet)
+	ver := parsed.IPVersion()
+	src := parsed.SrcIP()
+	dst := parsed.DstIP()
+	if ver == 4 {
+		fmt.Printf("Src IP: %d.%d.%d.%d | ", src[0], src[1], src[2], src[3])
+		fmt.Printf("Dst IP: %d.%d.%d.%d\n", dst[0], dst[1], dst[2], dst[3])
+	} else if ver == 6 {
+		fmt.Printf("Src IP: %s | ", Ipv6ToString(src))
+		fmt.Printf("Dst IP: %s\n", Ipv6ToString(dst))
+	}
 }

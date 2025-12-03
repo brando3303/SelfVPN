@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"log"
 	"net"
+	"os"
 	"strconv"
 	"strings"
 
@@ -66,6 +67,16 @@ func SetupServerTunnel(tunName string, tunnel_interface_ip string, outboundIf st
 		return nil, fmt.Errorf("link up: %w", err)
 	}
 
+	// 3. add route
+	route := &netlink.Route{
+		LinkIndex: link.Attrs().Index,
+		Scope:     netlink.SCOPE_UNIVERSE,
+		Dst:       addr.IPNet, // same subnet as the tun address
+	}
+	if err := netlink.RouteAdd(route); err != nil && !isExistsErr(err) {
+		return nil, fmt.Errorf("route add: %w", err)
+	}
+
 	// 4. NAT via nftables
 	c := &nftables.Conn{}
 
@@ -99,11 +110,65 @@ func SetupServerTunnel(tunName string, tunnel_interface_ip string, outboundIf st
 		},
 	})
 
+	filter := c.AddTable(&nftables.Table{
+		Family: nftables.TableFamilyINet,
+		Name:   "filter",
+	})
+
+	fwd := c.AddChain(&nftables.Chain{
+		Name:  "forward",
+		Table: filter,
+	})
+
+	c.AddRule(&nftables.Rule{
+		Table: filter,
+		Chain: fwd,
+		Exprs: []expr.Any{
+			&expr.Meta{Key: expr.MetaKeyIIFNAME, Register: 1},
+			&expr.Cmp{
+				Register: 1,
+				Op:       expr.CmpOpEq,
+				Data:     ifnameBytes(tunName),
+			},
+			&expr.Verdict{Kind: expr.VerdictAccept},
+		},
+	})
+
+	c.AddRule(&nftables.Rule{
+		Table: filter,
+		Chain: fwd,
+		Exprs: []expr.Any{
+			&expr.Meta{Key: expr.MetaKeyOIFNAME, Register: 1},
+			&expr.Cmp{
+				Register: 1,
+				Op:       expr.CmpOpEq,
+				Data:     ifnameBytes(tunName),
+			},
+			&expr.Ct{Key: expr.CtKeySTATE, Register: 1},
+			&expr.Bitwise{
+				SourceRegister: 1,
+				DestRegister:   1,
+				Len:            4,
+				Mask:           []byte{0, 0, 0, 6}, // ESTABLISHED|RELATED
+				Xor:            []byte{0, 0, 0, 0},
+			},
+			&expr.Verdict{Kind: expr.VerdictAccept},
+		},
+	})
+
 	if err := c.Flush(); err != nil {
 		return nil, fmt.Errorf("nft flush: %w", err)
 	}
 
+	if err := enableIPForwarding(); err != nil {
+		return nil, fmt.Errorf("enable IP forwarding: %w", err)
+	}
+
 	return tun, nil
+}
+
+func enableIPForwarding() error {
+	return os.WriteFile("/proc/sys/net/ipv4/ip_forward", []byte("1"), 0644)
 }
 
 func ifnameBytes(name string) []byte {
@@ -186,10 +251,9 @@ func packetOutLoop(iface *water.Interface, conn *net.UDPConn) {
 			continue
 		}
 		// process and send packet to VPN server
-		processOutPacket(packet[:n], conn)
 		fmt.Printf("sending resp to client: ")
-		parsed := util.ParseIpv4(packet[:n])
-		util.PrintIpv4(parsed)
+		util.PrintPacketInfo(packet[:n])
+		processOutPacket(packet[:n], conn)
 	}
 }
 
@@ -213,10 +277,9 @@ func packetInLoop(iface *water.Interface, conn *net.UDPConn) {
 			continue
 		}
 		// process and write packet to TUN interface
-		processInPacket(packet[:n], iface)
-		parsed := util.ParseIpv4(packet[:n])
 		fmt.Printf("recieved from client, sending to dest: ")
-		util.PrintIpv4(parsed)
+		util.PrintPacketInfo(packet[:n])
+		processInPacket(packet[:n], iface)
 	}
 }
 
