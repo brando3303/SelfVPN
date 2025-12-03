@@ -17,6 +17,8 @@ import (
 	//iptables "github.com/coreos/go-iptables/iptables"
 )
 
+var client net.Addr = nil
+
 type Ipv4Packet struct {
 	Version        uint8 // always 4
 	IHL            uint8 // header length in 32-bit words
@@ -262,7 +264,10 @@ func packetOutLoop(iface *water.Interface, conn *net.UDPConn) {
 // returns errors.
 func processOutPacket(packet []byte, conn *net.UDPConn) ([]byte, error) {
 	// for now just send the raw packet
-	_, err := conn.Write(packet)
+	_, err := conn.WriteTo(packet, client)
+	if err != nil {
+		fmt.Printf("Error writing to connection: %v", err)
+	}
 	return packet, err
 }
 
@@ -271,7 +276,8 @@ func packetInLoop(iface *water.Interface, conn *net.UDPConn) {
 	packet := make([]byte, 1024)
 	for {
 		// read packet from client
-		n, err := conn.Read(packet)
+		n, sender, err := conn.ReadFrom(packet)
+		client = sender // save client address for responses
 		if err != nil {
 			fmt.Printf("Error reading from connection: %v", err)
 			continue
