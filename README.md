@@ -61,4 +61,3 @@ sudo go run main.go client 203.0.113.1:1194 10.8.0.2/31 98.137.11.164/31
 - Server must have IP forwarding enabled (`/proc/sys/net/ipv4/ip_forward = 1`). The server automatically enables this.
 - The server automatically creates nftables rules for masquerading outgoing traffic on the specified outbound interface.
 - This is a research/learning project, **not production-ready security software**.
-- No encryption is currently implemented.
