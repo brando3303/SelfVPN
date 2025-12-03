@@ -91,7 +91,7 @@ func Run(args []string) {
 		fmt.Println("Usage: selfVPN client <key> <server_addr:port> <interface_cidr> <protected_subnet>")
 		return
 	}
-	key := args[0]
+	key := util.KeyFromString(args[0])
 	serverAddr := args[1]
 	interfaceCIDR := args[2]
 	protectedSubnet := args[3]
@@ -121,7 +121,7 @@ func Run(args []string) {
 
 }
 
-func packetOutLoop(iface *water.Interface, conn *net.UDPConn, key string) {
+func packetOutLoop(iface *water.Interface, conn *net.UDPConn, key []byte) {
 	packet := make([]byte, 1024)
 	for {
 		// read packet from TUN interface
@@ -151,7 +151,7 @@ func processOutPacket(packet []byte, conn *net.UDPConn) ([]byte, error) {
 	return packet, err
 }
 
-func packetInLoop(iface *water.Interface, conn *net.UDPConn, key string) {
+func packetInLoop(iface *water.Interface, conn *net.UDPConn, key []byte) {
 	packet := make([]byte, 1024)
 	for {
 		// read packet from VPN server

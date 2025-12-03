@@ -4,6 +4,7 @@ import (
 	"crypto/aes"
 	"crypto/cipher"
 	"crypto/rand"
+	"crypto/sha256"
 	"encoding/binary"
 	"fmt"
 	"io"
@@ -326,4 +327,9 @@ func Decrypt(key, ciphertext []byte) ([]byte, error) {
 	data := ciphertext[nonceSize:]
 
 	return gcm.Open(nil, nonce, data, nil)
+}
+
+func KeyFromString(s string) []byte {
+	h := sha256.Sum256([]byte(s))
+	return h[:16] // AES-128 key
 }
