@@ -206,16 +206,17 @@ func SetupUDPConn(listenPort int) (*net.UDPConn, error) {
 // Run starts the VPN server
 // args: listen_port, interface_cidr, outbound_interface
 func Run(args []string) {
-	if len(args) != 3 {
-		fmt.Println("Usage: selfVPN server <listen_port> <interface_cidr> <outbound_interface>")
+	if len(args) != 4 {
+		fmt.Println("Usage: selfVPN server <key> <listen_port> <interface_cidr> <outbound_interface>")
 		return
 	}
-	listenPort, err := strconv.Atoi(args[0])
+	listenPort, err := strconv.Atoi(args[1])
 	if err != nil {
 		log.Fatalf("Invalid listen port: %v", err)
 	}
-	interfaceCIDR := args[1]
-	outboundIf := args[2]
+	interfaceCIDR := args[2]
+	outboundIf := args[3]
+	key := args[0]
 
 	fmt.Printf("Starting selfVPN server\n")
 	fmt.Printf("Listening on port: %d\n", listenPort)
@@ -237,13 +238,13 @@ func Run(args []string) {
 	defer conn.Close()
 
 	// Step 3: Handle packets (for demo, just read and dump)
-	go packetOutLoop(iface, conn)
-	go packetInLoop(iface, conn)
+	go packetOutLoop(iface, conn, key)
+	go packetInLoop(iface, conn, key)
 	select {} // block forever
 
 }
 
-func packetOutLoop(iface *water.Interface, conn *net.UDPConn) {
+func packetOutLoop(iface *water.Interface, conn *net.UDPConn, key string) {
 	packet := make([]byte, 1024)
 	for {
 		// read packet from TUN interface
@@ -252,10 +253,15 @@ func packetOutLoop(iface *water.Interface, conn *net.UDPConn) {
 			fmt.Printf("Error reading from interface: %v", err)
 			continue
 		}
-		// process and send packet to VPN server
+		// process and send packet to VPN client
 		fmt.Printf("sending resp to client: ")
-		util.PrintPacketInfo(packet[:n])
-		processOutPacket(packet[:n], conn)
+		encryptedPacket, err := util.Encrypt([]byte(key), packet[:n])
+		if err != nil {
+			fmt.Printf("Error encrypting packet: %v", err)
+			continue
+		}
+		util.PrintPacketInfo(encryptedPacket)
+		processOutPacket(encryptedPacket, conn)
 	}
 }
 
@@ -272,7 +278,7 @@ func processOutPacket(packet []byte, conn *net.UDPConn) ([]byte, error) {
 }
 
 // handles incoming packets from the VPN clients
-func packetInLoop(iface *water.Interface, conn *net.UDPConn) {
+func packetInLoop(iface *water.Interface, conn *net.UDPConn, key string) {
 	packet := make([]byte, 1024)
 	for {
 		// read packet from client
@@ -284,8 +290,13 @@ func packetInLoop(iface *water.Interface, conn *net.UDPConn) {
 		}
 		// process and write packet to TUN interface
 		fmt.Printf("recieved from client, sending to dest: ")
-		util.PrintPacketInfo(packet[:n])
-		processInPacket(packet[:n], iface)
+		decryptedPacket, err := util.Decrypt([]byte(key), packet[:n])
+		if err != nil {
+			fmt.Printf("Error decrypting packet: %v", err)
+			continue
+		}
+		util.PrintPacketInfo(decryptedPacket)
+		processInPacket(decryptedPacket, iface)
 	}
 }
 

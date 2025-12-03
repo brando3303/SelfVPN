@@ -1,8 +1,12 @@
 package util
 
 import (
+	"crypto/aes"
+	"crypto/cipher"
+	"crypto/rand"
 	"encoding/binary"
 	"fmt"
+	"io"
 )
 
 type IPPacket interface {
@@ -283,4 +287,43 @@ func PrintPacketInfo(packet []byte) {
 		fmt.Printf("Src IP: %s | ", Ipv6ToString(src))
 		fmt.Printf("Dst IP: %s\n", Ipv6ToString(dst))
 	}
+}
+
+// Encrypt returns nonce || ciphertext
+func Encrypt(key, plaintext []byte) ([]byte, error) {
+	block, err := aes.NewCipher(key)
+	if err != nil {
+		return nil, err
+	}
+
+	gcm, err := cipher.NewGCM(block)
+	if err != nil {
+		return nil, err
+	}
+
+	nonce := make([]byte, gcm.NonceSize())
+	if _, err := io.ReadFull(rand.Reader, nonce); err != nil {
+		return nil, err
+	}
+
+	ciphertext := gcm.Seal(nil, nonce, plaintext, nil)
+	return append(nonce, ciphertext...), nil
+}
+
+func Decrypt(key, ciphertext []byte) ([]byte, error) {
+	block, err := aes.NewCipher(key)
+	if err != nil {
+		return nil, err
+	}
+
+	gcm, err := cipher.NewGCM(block)
+	if err != nil {
+		return nil, err
+	}
+
+	nonceSize := gcm.NonceSize()
+	nonce := ciphertext[:nonceSize]
+	data := ciphertext[nonceSize:]
+
+	return gcm.Open(nil, nonce, data, nil)
 }
