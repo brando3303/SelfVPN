@@ -104,6 +104,7 @@ func initConnectionPhase(serverAddr string) (string, string, *net.UDPConn, error
 
 	// for simplicity, assume server sends "clientIP;sessionKey"
 	response := string(buffer[:n])
+	fmt.Println("Server response:", response)
 	var clientIP, sessionKey string
 	_, err = fmt.Sscanf(response, "%s;%s", &clientIP, &sessionKey)
 	if err != nil {
