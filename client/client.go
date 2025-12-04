@@ -106,11 +106,12 @@ func initConnectionPhase(serverAddr string) (string, []byte, *net.UDPConn, error
 	response := string(buffer[:n])
 	fmt.Println("Server response:", response)
 	var clientIP string
-	var sessionKey []byte
-	_, err = fmt.Sscanf(response, "%s;%s", &clientIP, &sessionKey)
+	var sessionKeyStr string
+	_, err = fmt.Sscanf(response, "%s;%s", &clientIP, &sessionKeyStr)
 	if err != nil {
 		return "", nil, nil, fmt.Errorf("failed to parse server response: %w", err)
 	}
+	sessionKey := []byte(sessionKeyStr)
 
 	return clientIP, sessionKey, conn, nil
 }
