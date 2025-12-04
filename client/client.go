@@ -1,11 +1,9 @@
 package client
 
 import (
-	"encoding/base64"
 	"fmt"
 	"log"
 	"net"
-	"strings"
 
 	"selfVPN/util"
 
@@ -105,23 +103,21 @@ func initConnectionPhase(serverAddr string) (string, []byte, *net.UDPConn, error
 	}
 
 	// for simplicity, assume server sends "clientIP;sessionKey"
-	response := string(buffer[:n])
-	fmt.Println("Server response:", response)
-
-	// Split on the semicolon
-	parts := strings.SplitN(response, ";", 2)
-	if len(parts) != 2 {
-		return "", nil, nil, fmt.Errorf("invalid server response format")
+	// Find the semicolon position
+	semicolonPos := -1
+	for i := 0; i < n; i++ {
+		if buffer[i] == ';' {
+			semicolonPos = i
+			break
+		}
 	}
 
-	clientIP := parts[0]
-	sessionKeyStr := parts[1]
-
-	// If sessionKeyStr is Base64 encoded, decode it
-	sessionKey, err := base64.StdEncoding.DecodeString(sessionKeyStr)
-	if err != nil {
-		return "", nil, nil, fmt.Errorf("failed to decode session key: %w", err)
+	if semicolonPos == -1 {
+		return "", nil, nil, fmt.Errorf("invalid server response format: no semicolon found")
 	}
+
+	clientIP := string(buffer[:semicolonPos])
+	sessionKey := buffer[semicolonPos+1 : n]
 
 	fmt.Println("Client IP:", clientIP)
 	fmt.Println("Session Key:", sessionKey)

@@ -70,8 +70,12 @@ func (cm *ClientManager) ContainsClientStr(addr string) bool {
 func (cm *ClientManager) ContainsClientAddr(addr net.Addr) bool {
 	cm.mu.Lock()
 	defer cm.mu.Unlock()
-	_, exists := cm.clients[addr.String()]
-	return exists
+	for _, client := range cm.clients {
+		if client.Addr.String() == addr.String() {
+			return true
+		}
+	}
+	return false
 }
 
 // returns client if exists from internal ip string
