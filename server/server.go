@@ -256,7 +256,6 @@ func packetOutLoop(iface *water.Interface, conn *net.UDPConn, key []byte) {
 		}
 		// process and send packet to VPN client
 		fmt.Printf("sending resp to client: ")
-		util.PrintPacketInfo(packet[:n])
 
 		// parsed := util.ParseIpv4(packet[:n])
 		// dest_client := net.JoinHostPort(parsed.Dst[0:4], strconv.Itoa(int(parsed.Protocol)))
@@ -270,6 +269,7 @@ func packetOutLoop(iface *water.Interface, conn *net.UDPConn, key []byte) {
 			fmt.Printf("Error encrypting packet: %v", err)
 			continue
 		}
+		util.PrintPacketInfo(packet[:n])
 		processOutPacket(encryptedPacket, conn)
 	}
 }

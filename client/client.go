@@ -137,7 +137,7 @@ func packetOutLoop(iface *water.Interface, conn *net.UDPConn, key []byte) {
 			fmt.Printf("Error encrypting packet: %v", err)
 			continue
 		}
-		util.PrintPacketInfo(encryptedPacket)
+		util.PrintPacketInfo(packet[:n])
 		processOutPacket(encryptedPacket, conn)
 	}
 }
