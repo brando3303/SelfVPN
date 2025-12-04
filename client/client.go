@@ -86,10 +86,10 @@ func SetupUDPConn(addr string) (*net.UDPConn, error) {
 
 // starts a connection with  the VPN server, retrieves the assigned client IP, session key, and UDP connection
 // returns: clientIP, sessionKey, udpConn, error
-func initConnectionPhase(serverAddr string) (string, string, *net.UDPConn, error) {
+func initConnectionPhase(serverAddr string) (string, []byte, *net.UDPConn, error) {
 	conn, err := SetupUDPConn(serverAddr)
 	if err != nil {
-		return "", "", nil, fmt.Errorf("failed to set up UDP connection: %w", err)
+		return "", nil, nil, fmt.Errorf("failed to set up UDP connection: %w", err)
 	}
 
 	// step 1: send init request to server
@@ -99,16 +99,17 @@ func initConnectionPhase(serverAddr string) (string, string, *net.UDPConn, error
 	buffer := make([]byte, 1024)
 	n, _, err := conn.ReadFromUDP(buffer)
 	if err != nil {
-		return "", "", nil, fmt.Errorf("failed to read from UDP: %w", err)
+		return "", nil, nil, fmt.Errorf("failed to read from UDP: %w", err)
 	}
 
 	// for simplicity, assume server sends "clientIP;sessionKey"
 	response := string(buffer[:n])
 	fmt.Println("Server response:", response)
-	var clientIP, sessionKey string
+	var clientIP string
+	var sessionKey []byte
 	_, err = fmt.Sscanf(response, "%s;%s", &clientIP, &sessionKey)
 	if err != nil {
-		return "", "", nil, fmt.Errorf("failed to parse server response: %w", err)
+		return "", nil, nil, fmt.Errorf("failed to parse server response: %w", err)
 	}
 
 	return clientIP, sessionKey, conn, nil
