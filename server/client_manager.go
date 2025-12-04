@@ -90,7 +90,7 @@ func (cm *ClientManager) GetClientExternal(addr net.Addr) (*Client, string, bool
 	cm.mu.Lock()
 	defer cm.mu.Unlock()
 	for internalip, client := range cm.clients {
-		if client.Conn.RemoteAddr().String() == addr.String() {
+		if client.Addr.String() == addr.String() {
 			return client, internalip, true
 		}
 	}
