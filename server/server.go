@@ -340,6 +340,7 @@ func packetInLoop(iface *water.Interface, conn *net.UDPConn) {
 // returns errors.
 func processInPacket(packet []byte, iface *water.Interface) error {
 	// for now just write the raw packet
+	fmt.Printf("Writing packet to TUN interface\n")
 	_, err := iface.Write(packet)
 	return err
 }

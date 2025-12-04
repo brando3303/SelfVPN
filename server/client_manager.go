@@ -22,6 +22,7 @@ type ClientManager struct {
 	lastusedIP []byte
 }
 
+// TODO: use device interface ip as base for ip allocation
 func NewClientManager() *ClientManager {
 	return &ClientManager{
 		clients:    make(map[string]*Client),
