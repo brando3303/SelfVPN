@@ -8,6 +8,7 @@ import (
 	"encoding/binary"
 	"fmt"
 	"io"
+	"net"
 )
 
 type IPPacket interface {
@@ -332,4 +333,13 @@ func Decrypt(key, ciphertext []byte) ([]byte, error) {
 func KeyFromString(s string) []byte {
 	h := sha256.Sum256([]byte(s))
 	return h[:16] // AES-128 key
+}
+
+func ContainsAddr(slice []net.Addr, a net.Addr) bool {
+	for _, addr := range slice {
+		if addr.String() == a.String() {
+			return true
+		}
+	}
+	return false
 }

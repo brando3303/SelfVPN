@@ -18,6 +18,7 @@ import (
 )
 
 var client net.Addr = nil
+var client_addrs = make([]net.Addr, 0)
 
 type Ipv4Packet struct {
 	Version        uint8 // always 4
@@ -255,12 +256,20 @@ func packetOutLoop(iface *water.Interface, conn *net.UDPConn, key []byte) {
 		}
 		// process and send packet to VPN client
 		fmt.Printf("sending resp to client: ")
+		util.PrintPacketInfo(packet[:n])
+
+		// parsed := util.ParseIpv4(packet[:n])
+		// dest_client := net.JoinHostPort(parsed.Dst[0:4], strconv.Itoa(int(parsed.Protocol)))
+		// if util.ContainsAddr(client_addrs, ) {
+		// 	fmt.Printf("No client connected for dest %s, dropping packet\n", net.JoinHostPort(parsed.Dst[0:4].String(), strconv.Itoa(int(parsed.Protocol))))
+		// 	continue
+		// }
+
 		encryptedPacket, err := util.Encrypt([]byte(key), packet[:n])
 		if err != nil {
 			fmt.Printf("Error encrypting packet: %v", err)
 			continue
 		}
-		util.PrintPacketInfo(encryptedPacket)
 		processOutPacket(encryptedPacket, conn)
 	}
 }
@@ -288,6 +297,19 @@ func packetInLoop(iface *water.Interface, conn *net.UDPConn, key []byte) {
 			fmt.Printf("Error reading from connection: %v", err)
 			continue
 		}
+		// add client to list if new
+		found := false
+		for _, addr := range client_addrs {
+			if addr.String() == sender.String() {
+				found = true
+				break
+			}
+		}
+		if !found {
+			client_addrs = append(client_addrs, sender)
+			fmt.Printf("New client connected: %s\n", sender.String())
+		}
+
 		// process and write packet to TUN interface
 		fmt.Printf("recieved from client, sending to dest: ")
 		decryptedPacket, err := util.Decrypt([]byte(key), packet[:n])
