@@ -11,6 +11,8 @@ import (
 	"net"
 )
 
+var CLIENT_INIT_MSG = []byte("CLIENT_INIT")
+
 type IPPacket interface {
 	IPVersion() uint8 // 4 or 6
 	SrcIP() []byte    // return 4 or 16 bytes
@@ -197,7 +199,7 @@ func ParseIPv6(packet []byte) *IPv6Packet {
 
 	for {
 		// Not an extension header → break.
-		if !isIPv6ExtensionHeader(next) {
+		if !IsIPv6ExtensionHeader(next) {
 			break
 		}
 
@@ -232,7 +234,7 @@ func ParseIPv6(packet []byte) *IPv6Packet {
 	return ipv6
 }
 
-func isIPv6ExtensionHeader(h uint8) bool {
+func IsIPv6ExtensionHeader(h uint8) bool {
 	switch h {
 	case 0, 43, 44, 50, 51, 60:
 		return true
@@ -241,7 +243,7 @@ func isIPv6ExtensionHeader(h uint8) bool {
 	}
 }
 
-func parseIpPacket(packet []byte) IPPacket {
+func ParseIpPacket(packet []byte) IPPacket {
 	if len(packet) < 1 {
 		fmt.Println("Packet too short")
 		return nil
@@ -278,7 +280,7 @@ func Ipv6ToString(ip []byte) string {
 }
 
 func PrintPacketInfo(packet []byte) {
-	parsed := parseIpPacket(packet)
+	parsed := ParseIpPacket(packet)
 	ver := parsed.IPVersion()
 	src := parsed.SrcIP()
 	dst := parsed.DstIP()
@@ -342,4 +344,12 @@ func ContainsAddr(slice []net.Addr, a net.Addr) bool {
 		}
 	}
 	return false
+}
+
+func GenerateNewKey() []byte {
+	key := make([]byte, 16) // AES-128
+	if _, err := io.ReadFull(rand.Reader, key); err != nil {
+		return nil
+	}
+	return key
 }

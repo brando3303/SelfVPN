@@ -17,15 +17,14 @@ import (
  *   selfVPN <client|server> [args...]
  *
  * Client mode:
- *   selfVPN client <server_addr:port> <interface_cidr> <protected_subnet>
+ *   selfVPN client <server_addr:port> <protected_subnet>
  *
  * Server mode:
  *   selfVPN server <listen_port> <interface_cidr> <outbound_interface>
  *
  * args:
- *   - key: The encryption key for the VPN connection.
  *   - server_addr:port: The IP address and port of the VPN server to connect to.
- *   - interface_cidr: The CIDR notation for the VPN interface IP address. should be /32
+ *   - interface_cidr: The CIDR notation for the VPN interface IP address. should be /31 for p2p connection.
  *   - protected_subnet: The subnet(s) to route through the VPN.
  *   - listen_port: The port on which the VPN server listens for incoming connections.
  *   - outbound_interface: The network interface used for outbound traffic on the server.
@@ -38,8 +37,8 @@ import (
 func main() {
 	if len(os.Args) < 2 {
 		fmt.Println("Usage: selfVPN <client|server> [args...]")
-		fmt.Println("\nClient usage: selfVPN client <key> <server_addr:port> <interface_cidr> <protected_subnet>")
-		fmt.Println("Server usage: selfVPN server <key> <listen_port> <interface_cidr> <outbound_interface>")
+		fmt.Println("\nClient usage: selfVPN client <server_addr:port> <protected_subnet>")
+		fmt.Println("Server usage: selfVPN server <listen_port> <interface_cidr> <outbound_interface>")
 		os.Exit(1)
 	}
 

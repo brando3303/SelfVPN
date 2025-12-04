@@ -1,6 +1,7 @@
 package server
 
 import (
+	"encoding/binary"
 	"fmt"
 	"log"
 	"net"
@@ -14,11 +15,9 @@ import (
 	"github.com/google/nftables/expr"
 	"github.com/songgao/water"
 	"github.com/vishvananda/netlink"
-	//iptables "github.com/coreos/go-iptables/iptables"
 )
 
-var client net.Addr = nil
-var client_addrs = make([]net.Addr, 0)
+var client_manager = NewClientManager()
 
 type Ipv4Packet struct {
 	Version        uint8 // always 4
@@ -207,17 +206,16 @@ func SetupUDPConn(listenPort int) (*net.UDPConn, error) {
 // Run starts the VPN server
 // args: listen_port, interface_cidr, outbound_interface
 func Run(args []string) {
-	if len(args) != 4 {
-		fmt.Println("Usage: selfVPN server <key> <listen_port> <interface_cidr> <outbound_interface>")
+	if len(args) != 3 {
+		fmt.Println("Usage: selfVPN server <listen_port> <interface_cidr> <outbound_interface>")
 		return
 	}
-	listenPort, err := strconv.Atoi(args[1])
+	listenPort, err := strconv.Atoi(args[0])
 	if err != nil {
 		log.Fatalf("Invalid listen port: %v", err)
 	}
-	interfaceCIDR := args[2]
-	outboundIf := args[3]
-	key := util.KeyFromString(args[0])
+	interfaceCIDR := args[1]
+	outboundIf := args[2]
 
 	fmt.Printf("Starting selfVPN server\n")
 	fmt.Printf("Listening on port: %d\n", listenPort)
@@ -239,16 +237,17 @@ func Run(args []string) {
 	defer conn.Close()
 
 	// Step 3: Handle packets (for demo, just read and dump)
-	go packetOutLoop(iface, conn, key)
-	go packetInLoop(iface, conn, key)
+	go packetOutLoop(iface)
+	go packetInLoop(iface, conn)
 	select {} // block forever
 
 }
 
-func packetOutLoop(iface *water.Interface, conn *net.UDPConn, key []byte) {
+func packetOutLoop(iface *water.Interface) {
 	packet := make([]byte, 1024)
 	for {
 		// read packet from TUN interface
+		fmt.Printf("---------------------Out Loop---------------------------")
 		n, err := iface.Read(packet)
 		if err != nil {
 			fmt.Printf("Error reading from interface: %v", err)
@@ -257,12 +256,23 @@ func packetOutLoop(iface *water.Interface, conn *net.UDPConn, key []byte) {
 		// process and send packet to VPN client
 		fmt.Printf("sending resp to client: ")
 
-		// parsed := util.ParseIpv4(packet[:n])
-		// dest_client := net.JoinHostPort(parsed.Dst[0:4], strconv.Itoa(int(parsed.Protocol)))
-		// if util.ContainsAddr(client_addrs, ) {
-		// 	fmt.Printf("No client connected for dest %s, dropping packet\n", net.JoinHostPort(parsed.Dst[0:4].String(), strconv.Itoa(int(parsed.Protocol))))
-		// 	continue
-		// }
+		parsed := util.ParseIpPacket(packet[:n])
+		client_addr_string := ""
+		if parsed.IPVersion() == 4 {
+			client_addr_string = util.Uint32ToIPv4(binary.BigEndian.Uint32(parsed.DstIP()))
+		} else if parsed.IPVersion() == 6 {
+			client_addr_string = util.Ipv6ToString(parsed.DstIP())
+		} else {
+			fmt.Printf("Unknown IP version, dropping packet\n")
+			continue
+		}
+		// get client session key
+		client, exists := client_manager.GetClientInternal(client_addr_string)
+		if !exists {
+			fmt.Printf("No client connected for dest %s, dropping packet\n", client_addr_string)
+			continue
+		}
+		key := client.SessionKey
 
 		encryptedPacket, err := util.Encrypt([]byte(key), packet[:n])
 		if err != nil {
@@ -270,16 +280,17 @@ func packetOutLoop(iface *water.Interface, conn *net.UDPConn, key []byte) {
 			continue
 		}
 		util.PrintPacketInfo(packet[:n])
-		processOutPacket(encryptedPacket, conn)
+		fmt.Printf("to client %s\n", client_addr_string)
+		processOutPacket(encryptedPacket, &client.Conn, &client.Addr)
 	}
 }
 
 // processOutPacket takes in the raw packet bytes recieved from the TUN interface,
 // performs all processing steps (encryption, encapsulation), sends the packet to the VPN server,
 // returns errors.
-func processOutPacket(packet []byte, conn *net.UDPConn) ([]byte, error) {
+func processOutPacket(packet []byte, conn *net.UDPConn, addr *net.Addr) ([]byte, error) {
 	// for now just send the raw packet
-	_, err := conn.WriteTo(packet, client)
+	_, err := conn.WriteTo(packet, *addr)
 	if err != nil {
 		fmt.Printf("Error writing to connection: %v", err)
 	}
@@ -287,28 +298,30 @@ func processOutPacket(packet []byte, conn *net.UDPConn) ([]byte, error) {
 }
 
 // handles incoming packets from the VPN clients
-func packetInLoop(iface *water.Interface, conn *net.UDPConn, key []byte) {
+func packetInLoop(iface *water.Interface, conn *net.UDPConn) {
 	packet := make([]byte, 1024)
 	for {
 		// read packet from client
 		n, sender, err := conn.ReadFrom(packet)
-		client = sender // save client address for responses
+
 		if err != nil {
 			fmt.Printf("Error reading from connection: %v", err)
 			continue
 		}
-		// add client to list if new
-		found := false
-		for _, addr := range client_addrs {
-			if addr.String() == sender.String() {
-				found = true
-				break
-			}
+		// check if new client
+		if string(packet[:n]) == string(util.CLIENT_INIT_MSG) {
+			fmt.Printf("New client connection from %s\n", sender.String())
+			processNewConnection(conn, sender)
+			continue
 		}
-		if !found {
-			client_addrs = append(client_addrs, sender)
-			fmt.Printf("New client connected: %s\n", sender.String())
+		// get client if exists
+		if !client_manager.ContainsClientAddr(sender) {
+			fmt.Printf("Unknown client %s, dropping packet\n", sender.String())
+			continue
 		}
+		// existing client
+		client, _, _ := client_manager.GetClientExternal(sender)
+		key := client.SessionKey
 
 		// process and write packet to TUN interface
 		fmt.Printf("recieved from client, sending to dest: ")
@@ -329,4 +342,24 @@ func processInPacket(packet []byte, iface *water.Interface) error {
 	// for now just write the raw packet
 	_, err := iface.Write(packet)
 	return err
+}
+
+// handles initial handshake when a new client connects
+// generates a new session key for the client (get finds a previous one if exists)
+// sends session key and assigned IP to client
+func processNewConnection(conn *net.UDPConn, sender net.Addr) {
+	// add client to client manage
+	var skey []byte
+	internal_ip := ""
+	if client_manager.ContainsClientAddr(sender) {
+		client, iip, _ := client_manager.GetClientExternal(sender)
+		internal_ip = iip
+		skey = client.SessionKey
+	} else {
+		skey = util.GenerateNewKey()
+		internal_ip = client_manager.GenerateNewIP()
+		client_manager.AddClient(internal_ip, sender, *conn, skey)
+	}
+	conn.WriteTo([]byte(internal_ip+";"+string(skey)), sender)
+	fmt.Printf("Assigned IP %s with session key %x to client %s\n", internal_ip, skey, sender.String())
 }

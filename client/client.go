@@ -84,39 +84,66 @@ func SetupUDPConn(addr string) (*net.UDPConn, error) {
 	return conn, nil
 }
 
+// starts a connection with  the VPN server, retrieves the assigned client IP, session key, and UDP connection
+// returns: clientIP, sessionKey, udpConn, error
+func initConnectionPhase(serverAddr string) (string, string, *net.UDPConn, error) {
+	conn, err := SetupUDPConn(serverAddr)
+	if err != nil {
+		return "", "", nil, fmt.Errorf("failed to set up UDP connection: %w", err)
+	}
+
+	// step 1: send init request to server
+	conn.Write([]byte(util.CLIENT_INIT_MSG))
+
+	// step 2: recieve assigned client IP and session key from server
+	buffer := make([]byte, 1024)
+	n, _, err := conn.ReadFromUDP(buffer)
+	if err != nil {
+		return "", "", nil, fmt.Errorf("failed to read from UDP: %w", err)
+	}
+
+	// for simplicity, assume server sends "clientIP;sessionKey"
+	response := string(buffer[:n])
+	var clientIP, sessionKey string
+	_, err = fmt.Sscanf(response, "%s;%s", &clientIP, &sessionKey)
+	if err != nil {
+		return "", "", nil, fmt.Errorf("failed to parse server response: %w", err)
+	}
+
+	return clientIP, sessionKey, conn, nil
+}
+
 // Run starts the VPN client
 // args: server_addr:port, interface_cidr, protected_subnet
 func Run(args []string) {
-	if len(args) != 4 {
-		fmt.Println("Usage: selfVPN client <key> <server_addr:port> <interface_cidr> <protected_subnet>")
+	if len(args) != 2 {
+		fmt.Println("Usage: selfVPN client <server_addr:port> <protected_subnet>")
 		return
 	}
-	key := util.KeyFromString(args[0])
-	serverAddr := args[1]
-	interfaceCIDR := args[2]
-	protectedSubnet := args[3]
+	serverAddr := args[0]
+	protectedSubnet := args[1]
 	fmt.Printf("Starting selfVPN client\n")
 	fmt.Printf("Server address: %s\n", serverAddr)
-	fmt.Printf("Interface CIDR: %s\n", interfaceCIDR)
 	fmt.Printf("Protected subnet: %s\n", protectedSubnet)
 
-	// Create tunnel interface :
-	// read from tunnel -> reqs from os/user-space (applications etc, the data that will be sent to the VPN)
-	// write to tunnel -> send response to os
-	iface, err := initTunnel("tun0", interfaceCIDR, protectedSubnet)
-	if err != nil {
-		log.Fatalf("Failed to initialize tunnel: %v", err)
-	}
+	clientIP, sessionKey, conn, err := initConnectionPhase(serverAddr)
 
-	conn, err := SetupUDPConn(serverAddr)
 	if err != nil {
 		log.Fatalf("Failed to set up UDP connection: %v", err)
 	}
 	defer conn.Close()
 
+	// Create tunnel interface :
+	// read from tunnel -> reqs from os/user-space (applications etc, the data that will be sent to the VPN)
+	// write to tunnel -> send response to os
+	iface, err := initTunnel("tun0", clientIP+"/31", protectedSubnet)
+	if err != nil {
+		log.Fatalf("Failed to initialize tunnel: %v", err)
+	}
+
 	// Step 3: Handle packets (for demo, just read and dump)
-	go packetOutLoop(iface, conn, key)
-	go packetInLoop(iface, conn, key)
+	go packetOutLoop(iface, conn, []byte(sessionKey))
+	go packetInLoop(iface, conn, []byte(sessionKey))
 	select {} // block forever
 
 }
